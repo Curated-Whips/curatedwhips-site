@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://curatedwhips.com/sitemap.xml
