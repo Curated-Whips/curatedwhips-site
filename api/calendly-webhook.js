@@ -20,16 +20,19 @@ module.exports = async (req, res) => {
 
   try {
     const { event, payload } = req.body;
+    console.log('Calendly webhook received. Event:', event);
 
     if (event === 'invitee.canceled') {
-      await supabase
+      const { error } = await supabase
         .from('leads')
         .update({ status: 'Nurture', notes: 'Calendly booking canceled' })
         .eq('calendly_event_uri', payload.uri);
+      if (error) console.error('Supabase update error (cancel):', error);
       return res.status(200).json({ received: true });
     }
 
     if (event !== 'invitee.created') {
+      console.log('Ignoring unrecognized event type:', event);
       return res.status(200).json({ received: true });
     }
 
@@ -43,8 +46,9 @@ module.exports = async (req, res) => {
       intake_call_datetime: eventInfo.start_time || null,
       status: 'Booked Call',
     };
+    console.log('Prepared record:', record);
 
-    const { data: existing } = await supabase
+    const { data: existing, error: selectError } = await supabase
       .from('leads')
       .select('id')
       .eq('contact_email', invitee.email)
@@ -52,10 +56,17 @@ module.exports = async (req, res) => {
       .order('created_at', { ascending: false })
       .limit(1);
 
+    if (selectError) console.error('Supabase select error:', selectError);
+
     if (existing && existing.length > 0) {
-      await supabase.from('leads').update(record).eq('id', existing[0].id);
+      const { error: updateError } = await supabase
+        .from('leads')
+        .update(record)
+        .eq('id', existing[0].id);
+      if (updateError) console.error('Supabase update error:', updateError);
     } else {
-      await supabase.from('leads').insert(record);
+      const { error: insertError } = await supabase.from('leads').insert(record);
+      if (insertError) console.error('Supabase insert error:', insertError);
     }
 
     return res.status(200).json({ received: true });
