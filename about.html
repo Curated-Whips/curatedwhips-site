@@ -461,6 +461,34 @@
   let opened = false;
   let lastTranscriptSentLength = 0;
 
+  // Capture UTM params on whichever page the visitor actually landed on, and
+  // persist them for the rest of the session — a visitor can click a tagged
+  // ad link to the homepage, then browse to services.html before ever opening
+  // the widget, and the tag would otherwise be lost since services.html's own
+  // URL has no query string. sessionStorage survives that page-to-page nav
+  // but clears when the tab closes, which is the right lifetime for this —
+  // a UTM describes THIS visit, not something that should follow the visitor
+  // forever.
+  function captureUTMs() {
+    const params = new URLSearchParams(window.location.search);
+    const fromURL = {
+      utm_source: params.get('utm_source'),
+      utm_medium: params.get('utm_medium'),
+      utm_campaign: params.get('utm_campaign'),
+    };
+    const hasAny = fromURL.utm_source || fromURL.utm_medium || fromURL.utm_campaign;
+    if (hasAny) {
+      try { sessionStorage.setItem('cw_utm', JSON.stringify(fromURL)); } catch (e) { /* storage unavailable — fall through, just won't persist across pages */ }
+      return fromURL;
+    }
+    try {
+      const stored = sessionStorage.getItem('cw_utm');
+      if (stored) return JSON.parse(stored);
+    } catch (e) { /* storage unavailable or corrupt — proceed with no UTM data rather than break the widget */ }
+    return { utm_source: null, utm_medium: null, utm_campaign: null };
+  }
+  const utmData = captureUTMs();
+
   function sendTranscript() {
     // Only send if there's at least one new message since the last send,
     // and at least one real visitor message overall.
@@ -595,7 +623,7 @@
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: history }),
+        body: JSON.stringify({ messages: history, utm: utmData }),
       });
       const data = await res.json();
       const reply = data.reply || "Sorry, something went wrong on our end — try again in a moment, or call us at 844-987-9447.";
