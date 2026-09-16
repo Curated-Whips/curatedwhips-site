@@ -305,7 +305,7 @@ button:focus-visible {
    Logo mark — brand signature image
    ============================================ */
 .seal-logo {
-  width: 220px;
+  width: 160px;
   height: auto;
   flex-shrink: 0;
 }
