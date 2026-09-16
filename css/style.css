@@ -331,13 +331,13 @@ button:focus-visible {
       "actions logo"
       "phone phone";
   }
-  .hero { padding: 48px 0 40px; }
-  .hero-sub { margin-bottom: 24px; }
-  .hero-actions { flex-direction: column; align-items: flex-start; margin-bottom: 16px; }
+  .hero { padding: 36px 0 24px; }
+  .hero-sub { margin-bottom: 18px; }
+  .hero-actions { flex-direction: column; align-items: flex-start; margin-bottom: 12px; }
   .hero-actions .btn { width: 100%; }
   .seal-wrap { margin-top: 4px; justify-content: flex-end; }
   .seal-logo { width: 84px; }
-  .hero-phone { margin-top: 12px; }
+  .hero-phone { margin-top: 8px; }
 }
 
 /* ============================================
@@ -363,7 +363,7 @@ button:focus-visible {
 .section--ink .section-head p { color: rgba(254,253,251,0.72); }
 
 @media (max-width: 640px) {
-  .section { padding: 60px 0; }
+  .section { padding: 44px 0; }
 }
 
 /* ============================================
