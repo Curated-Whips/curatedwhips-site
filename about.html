@@ -208,5 +208,394 @@
 </div>
 
 <script src="js/main.js"></script>
+<!--
+  Curated Whips chat widget — restyled to match the site's ink/brass/Fraunces-Inter
+  design system (see css/style.css :root for the source palette).
+  Paste this whole block right before </body> on every page.
+-->
+<style>
+  :root {
+    --cw-header-bg: var(--ink, #12202B);
+    --cw-accent: var(--brass, #B0872F);
+    --cw-accent-text: var(--ink, #12202B); /* dark text ON the brass buttons — brass is too light for white text to pass contrast */
+    --cw-panel-bg: var(--white, #FEFDFB);
+    --cw-assistant-bubble: var(--paper, #F3EEE2);
+    --cw-body-text: var(--ink, #12202B);
+    --cw-font-body: var(--font-body, 'Inter', -apple-system, BlinkMacSystemFont, sans-serif);
+    --cw-font-display: var(--font-display, 'Fraunces', Georgia, serif);
+    --cw-radius: 6px;
+  }
+  #cw-widget-btn {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+    right: calc(24px + env(safe-area-inset-right, 0px));
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: var(--cw-accent);
+    color: var(--cw-accent-text);
+    border: none;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(18,32,43,0.28);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--cw-font-display);
+    font-size: 22px;
+    font-weight: 600;
+    transition: transform 0.15s ease;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #cw-widget-btn:hover { transform: scale(1.05); }
+  #cw-widget-panel {
+    position: fixed;
+    bottom: 96px;
+    right: 24px;
+    bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+    right: calc(24px + env(safe-area-inset-right, 0px));
+    width: 340px;
+    max-width: calc(100vw - 32px);
+    height: 460px;
+    max-height: calc(100vh - 140px);
+    max-height: calc(100dvh - 140px); /* dvh accounts for mobile keyboard/browser chrome; ignored by browsers that don't support it, falling back to the vh line above */
+    background: var(--cw-panel-bg);
+    border-radius: var(--cw-radius);
+    box-shadow: 0 8px 32px rgba(18,32,43,0.28);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    z-index: 9999;
+    font-family: var(--cw-font-body);
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+    pointer-events: none;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+  }
+  #cw-widget-panel.open {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    pointer-events: auto;
+  }
+  #cw-widget-header {
+    background: var(--cw-header-bg);
+    color: var(--white, #FEFDFB);
+    padding: 12px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  #cw-widget-header-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  #cw-widget-avatar {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: var(--cw-accent);
+    color: var(--cw-accent-text);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--cw-font-display);
+    font-weight: 600;
+    font-size: 15px;
+    flex-shrink: 0;
+  }
+  #cw-widget-header-text { display: flex; flex-direction: column; line-height: 1.25; }
+  #cw-widget-header-text .cw-name {
+    font-family: var(--cw-font-display);
+    font-size: 15px;
+    font-weight: 600;
+  }
+  #cw-widget-header-text .cw-status {
+    font-size: 11px;
+    opacity: 0.8;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  #cw-widget-header-text .cw-status::before {
+    content: '';
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--forest, #2E4638);
+    display: inline-block;
+  }
+  #cw-widget-header button.cw-close-btn {
+    background: none;
+    border: none;
+    color: var(--white, #FEFDFB);
+    font-size: 18px;
+    cursor: pointer;
+    opacity: 0.8;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #cw-widget-header button.cw-close-btn:hover { opacity: 1; }
+  #cw-widget-messages {
+    flex: 1;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    padding: 14px;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .cw-msg { margin-bottom: 12px; max-width: 85%; }
+  .cw-msg.user { margin-left: auto; text-align: right; }
+  .cw-bubble {
+    display: inline-block;
+    padding: 9px 13px;
+    border-radius: var(--cw-radius);
+  }
+  .cw-msg.user .cw-bubble { background: var(--cw-header-bg); color: var(--white, #FEFDFB); }
+  .cw-msg.assistant .cw-bubble { background: var(--cw-assistant-bubble); color: var(--cw-body-text); }
+  .cw-msg.assistant .cw-bubble a { color: var(--forest, #2E4638); }
+  .cw-book-btn {
+    display: inline-block;
+    margin-top: 6px;
+    background: var(--cw-accent);
+    color: var(--cw-accent-text) !important;
+    text-decoration: none !important;
+    padding: 9px 14px;
+    border-radius: var(--cw-radius);
+    font-size: 13px;
+    font-weight: 600;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #cw-widget-input-row {
+    display: flex;
+    border-top: 1px solid var(--line, rgba(18,32,43,0.12));
+    padding: 8px;
+  }
+  #cw-widget-input {
+    flex: 1;
+    border: none;
+    outline: none;
+    padding: 8px;
+    font-family: var(--cw-font-body);
+    font-size: 16px; /* must be 16px+ or iOS Safari auto-zooms the page on focus */
+    color: var(--cw-body-text);
+    background: transparent;
+    touch-action: manipulation;
+  }
+  #cw-widget-send {
+    background: var(--cw-accent);
+    color: var(--cw-accent-text);
+    border: none;
+    border-radius: var(--cw-radius);
+    padding: 8px 14px;
+    cursor: pointer;
+    font-family: var(--cw-font-body);
+    font-size: 14px;
+    font-weight: 600;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #cw-widget-send:disabled { opacity: 0.5; cursor: default; }
+</style>
+
+<button id="cw-widget-btn" type="button" aria-label="Chat with us">A</button>
+
+<div id="cw-widget-panel">
+  <div id="cw-widget-header">
+    <div id="cw-widget-header-left">
+      <div id="cw-widget-avatar">A</div>
+      <div id="cw-widget-header-text">
+        <span class="cw-name">Angela</span>
+        <span class="cw-status">Curated Whips</span>
+      </div>
+    </div>
+    <button id="cw-widget-close" type="button" class="cw-close-btn" aria-label="Close chat">✕</button>
+  </div>
+  <div id="cw-widget-messages"></div>
+  <div id="cw-widget-input-row">
+    <input id="cw-widget-input" type="text" enterkeyhint="send" placeholder="Type a message..." />
+    <button id="cw-widget-send" type="button">Send</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  const btn = document.getElementById('cw-widget-btn');
+  const panel = document.getElementById('cw-widget-panel');
+  const closeBtn = document.getElementById('cw-widget-close');
+  const messagesEl = document.getElementById('cw-widget-messages');
+  const input = document.getElementById('cw-widget-input');
+  const sendBtn = document.getElementById('cw-widget-send');
+
+  let history = []; // { role: 'user'|'assistant', content: string }
+  let opened = false;
+  let lastTranscriptSentLength = 0;
+
+  function sendTranscript() {
+    // Only send if there's at least one new message since the last send,
+    // and at least one real visitor message overall.
+    if (history.length <= lastTranscriptSentLength) return;
+    if (!history.some((m) => m.role === 'user')) return;
+
+    const payload = JSON.stringify({ messages: history });
+    lastTranscriptSentLength = history.length;
+
+    // sendBeacon is used (not fetch) because it reliably completes even as
+    // the page is unloading/closing — a regular fetch can get cancelled mid-flight.
+    if (navigator.sendBeacon) {
+      const blob = new Blob([payload], { type: 'application/json' });
+      navigator.sendBeacon('/api/log-transcript', blob);
+    } else {
+      // Fallback for older browsers without sendBeacon support.
+      fetch('/api/log-transcript', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+        keepalive: true,
+      }).catch(function (err) {
+        // Silent to the visitor (this fires in the background), but at
+        // least surfaces in the browser console for debugging — this path
+        // only runs on browsers without sendBeacon support, which is rare.
+        console.error('Transcript fallback send failed:', err);
+      });
+    }
+  }
+
+  // Ultimate fallback: fires even if the visitor never clicks the close
+  // button — just navigates away or closes the tab.
+  window.addEventListener('pagehide', sendTranscript);
+
+  const GREETING = "Hello, I'm Angela with Curated Whips. Are you looking to buy soon, or just exploring your options for now? Either way, I'm happy to help.";
+
+  function linkify(text) {
+    // turn URLs into clickable links (Calendly link becomes a styled button), escape HTML first —
+    // quotes MUST be escaped too, not just angle brackets, or a crafted string like
+    // http://x.com"onmouseover="alert(1) can break out of the href attribute below.
+    const escaped = text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+    return escaped.replace(/(https?:\/\/[^\s]+)/g, function (match) {
+      // strip common trailing punctuation so "...jhodaed." doesn't break the link
+      const trailing = match.match(/[.,!?)]+$/);
+      const clean = trailing ? match.slice(0, -trailing[0].length) : match;
+      const suffix = trailing ? trailing[0] : '';
+      if (clean.indexOf('calendly.com') !== -1) {
+        return '<br/><a class="cw-book-btn" href="' + clean + '" target="_blank" rel="noopener">Book Your Free Call</a>' + suffix;
+      }
+      return '<a href="' + clean + '" target="_blank" rel="noopener">' + clean + '</a>' + suffix;
+    });
+  }
+
+  function addMessage(role, content) {
+    const div = document.createElement('div');
+    div.className = 'cw-msg ' + role;
+    const bubble = document.createElement('div');
+    bubble.className = 'cw-bubble';
+    bubble.innerHTML = linkify(content);
+    div.appendChild(bubble);
+    messagesEl.appendChild(div);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  // On mobile, opening the keyboard shrinks the actually-visible viewport
+  // without CSS vh units reliably reflecting that. Without this, the input
+  // and Send button can end up hidden behind the keyboard. visualViewport
+  // tracks the real visible area and lets us reposition/resize to match.
+  if (window.visualViewport) {
+    function adjustForKeyboard() {
+      const vv = window.visualViewport;
+      const keyboardOffset = window.innerHeight - vv.height - vv.offsetTop;
+      if (keyboardOffset > 10) {
+        // Keyboard is open — reposition above it. Safe-area inset is moot
+        // here since the keyboard itself occupies that space.
+        panel.style.bottom = (96 + keyboardOffset) + 'px';
+        panel.style.maxHeight = (vv.height - 40) + 'px';
+      } else {
+        // Keyboard closed — hand control back to CSS so safe-area-inset
+        // positioning applies again, instead of leaving it permanently
+        // overridden by this function's last calculation.
+        panel.style.bottom = '';
+        panel.style.maxHeight = '';
+      }
+    }
+    window.visualViewport.addEventListener('resize', adjustForKeyboard);
+    window.visualViewport.addEventListener('scroll', adjustForKeyboard);
+  }
+
+  function togglePanel() {
+    panel.classList.toggle('open');
+    if (panel.classList.contains('open')) {
+      if (!opened) {
+        opened = true;
+        addMessage('assistant', GREETING);
+        // NOTE: greeting is shown but NOT pushed to `history` — Anthropic's API
+        // requires the conversation to start with a user message, so history
+        // stays empty until the visitor actually sends something.
+      }
+    } else {
+      // Panel just closed, however it was closed — send the transcript here
+      // so both the bubble icon and the explicit close button behave the same way.
+      sendTranscript();
+    }
+  }
+
+  btn.addEventListener('click', togglePanel);
+  closeBtn.addEventListener('click', togglePanel);
+
+  async function sendMessage() {
+    let text = input.value.trim();
+    if (!text) return;
+    if (text.length > 1000) text = text.slice(0, 1000);
+    input.value = '';
+    sendBtn.disabled = true;
+
+    addMessage('user', text);
+    history.push({ role: 'user', content: text });
+
+    const typingEl = document.createElement('div');
+    typingEl.className = 'cw-msg assistant';
+    typingEl.innerHTML = '<div class="cw-bubble">...</div>';
+    messagesEl.appendChild(typingEl);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: history }),
+      });
+      const data = await res.json();
+      const reply = data.reply || "Sorry, something went wrong on our end — try again in a moment, or call us at 844-987-9447.";
+      typingEl.remove();
+      addMessage('assistant', reply);
+      history.push({ role: 'assistant', content: reply });
+    } catch (err) {
+      typingEl.remove();
+      addMessage('assistant', "Sorry, something went wrong on our end — try again in a moment, or call us at 844-987-9447.");
+    } finally {
+      sendBtn.disabled = false;
+    }
+  }
+
+  sendBtn.addEventListener('click', sendMessage);
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') sendMessage();
+  });
+})();
+</script>
+
 </body>
 </html>
