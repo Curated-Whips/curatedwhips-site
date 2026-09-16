@@ -179,6 +179,10 @@ button:focus-visible {
   justify-content: center;
   margin-right: -6px;
 }
+.nav-toggle-icon {
+  width: 26px;
+  height: auto;
+}
 
 @media (max-width: 860px) {
   nav[aria-label="Primary"] {
@@ -255,9 +259,21 @@ button:focus-visible {
 .hero-grid {
   display: grid;
   grid-template-columns: 1.1fr 0.9fr;
-  gap: 56px;
+  column-gap: 56px;
   align-items: center;
+  grid-template-areas:
+    "eyebrow logo"
+    "heading logo"
+    "sub logo"
+    "actions logo"
+    "phone logo";
 }
+.hero-grid > .eyebrow { grid-area: eyebrow; }
+.hero-grid > h1 { grid-area: heading; }
+.hero-grid > .hero-sub { grid-area: sub; }
+.hero-grid > .hero-actions { grid-area: actions; }
+.hero-grid > .hero-phone { grid-area: phone; align-self: start; }
+.hero-grid > .seal-wrap { grid-area: logo; }
 .hero h1 {
   font-size: clamp(2.4rem, 5vw, 3.6rem);
   color: var(--white);
@@ -285,18 +301,11 @@ button:focus-visible {
 }
 .hero-phone a { color: var(--brass-light); font-weight: 600; }
 
-@media (max-width: 860px) {
-  .hero-grid { grid-template-columns: 1fr; }
-  .hero { padding: 56px 0 72px; }
-  .seal-wrap { margin-top: 8px; }
-  .seal-logo { width: 96px; }
-}
-
 /* ============================================
    Logo mark — brand signature image
    ============================================ */
 .seal-logo {
-  width: 220px;
+  width: 160px;
   height: auto;
   flex-shrink: 0;
 }
@@ -307,6 +316,27 @@ button:focus-visible {
 .seal-wrap {
   display: flex;
   justify-content: center;
+}
+
+@media (max-width: 860px) {
+  .hero-grid {
+    grid-template-columns: 1fr auto;
+    column-gap: 16px;
+    row-gap: 0;
+    align-items: start;
+    grid-template-areas:
+      "eyebrow eyebrow"
+      "heading heading"
+      "sub sub"
+      "actions logo"
+      "phone phone";
+  }
+  .hero { padding: 56px 0 72px; }
+  .hero-actions { flex-direction: column; align-items: flex-start; margin-bottom: 20px; }
+  .hero-actions .btn { width: 100%; }
+  .seal-wrap { margin-top: 4px; justify-content: flex-end; }
+  .seal-logo { width: 84px; }
+  .hero-phone { margin-top: 16px; }
 }
 
 /* ============================================
