@@ -181,6 +181,9 @@ button:focus-visible {
 }
 
 @media (max-width: 860px) {
+  nav[aria-label="Primary"] {
+    display: contents;
+  }
   .nav-links { 
     position: fixed;
     top: 76px; left: 0; right: 0;
@@ -285,32 +288,21 @@ button:focus-visible {
 @media (max-width: 860px) {
   .hero-grid { grid-template-columns: 1fr; }
   .hero { padding: 56px 0 72px; }
+  .seal-wrap { margin-top: 8px; }
+  .seal-logo { width: 96px; }
 }
 
 /* ============================================
-   Seal / stamp — signature element
+   Logo mark — brand signature image
    ============================================ */
-.seal {
-  width: 168px;
-  height: 168px;
+.seal-logo {
+  width: 220px;
+  height: auto;
   flex-shrink: 0;
 }
-.seal-ring { fill: none; stroke: var(--brass); stroke-width: 1.4; }
-.seal-ring--inner { stroke: rgba(212,169,79,0.5); stroke-width: 1; }
-.seal text {
-  font-family: var(--font-body);
-  font-size: 8.6px;
-  font-weight: 600;
-  letter-spacing: 0.22em;
-  fill: var(--brass-light);
-  text-transform: uppercase;
-}
-.seal .seal-center {
-  font-family: var(--font-display);
-  font-size: 15px;
-  fill: var(--white);
-  text-transform: none;
-  letter-spacing: 0;
+.seal-logo--small {
+  width: 140px;
+  height: auto;
 }
 .seal-wrap {
   display: flex;
@@ -512,6 +504,12 @@ button:focus-visible {
   gap: 56px;
   align-items: start;
 }
+.bio-media {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 20px;
+}
 .monogram {
   width: 200px;
   height: 200px;
@@ -544,8 +542,15 @@ button:focus-visible {
   font-size: 0.9rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  margin-bottom: 24px;
+  margin-bottom: 12px;
   display: block;
+}
+.bio-copy .bio-tagline {
+  font-family: var(--font-display);
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--brass);
+  margin: 0 0 8px;
 }
 .bio-copy h3 {
   font-family: var(--font-body);
@@ -557,11 +562,20 @@ button:focus-visible {
   margin: 28px 0 10px;
 }
 .bio-copy p { color: var(--ink); }
+.bio-copy .bio-cta-line {
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--brass-text);
+  margin-top: 20px;
+}
 
 @media (max-width: 720px) {
   .bio-grid { grid-template-columns: 1fr; }
-  .monogram { width: 140px; height: 140px; font-size: 2.2rem; }
-  .headshot { width: 160px; height: 160px; }
+  .bio-media { align-items: center; gap: 16px; margin-bottom: 8px; }
+  .monogram { width: 100px; height: 100px; font-size: 1.7rem; }
+  .headshot { width: 120px; height: 120px; }
+  .seal-logo--small { width: 64px; height: auto; }
 }
 
 /* ============================================
@@ -602,6 +616,12 @@ button:focus-visible {
 
 @media (max-width: 860px) {
   .contact-grid { grid-template-columns: 1fr; }
+  .calendly-shell {
+    min-height: 480px;
+  }
+  .calendly-shell iframe {
+    height: 480px;
+  }
 }
 
 /* ============================================
