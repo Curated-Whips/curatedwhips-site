@@ -224,7 +224,7 @@ function splitContact(contact) {
   return { email: null, phone: trimmed };
 }
 
-async function logLeadToSupabase(lead) {
+async function logLeadToSupabase(lead, utm) {
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
     console.error('Supabase env vars not set — lead captured but not written to Supabase:', lead);
     return;
@@ -233,6 +233,9 @@ async function logLeadToSupabase(lead) {
     const { email, phone } = splitContact(lead.contact);
     const { error } = await supabase.from('leads').insert({
       lead_source: 'Website Widget',
+      utm_source: (utm && utm.utmSource) || null,
+      utm_medium: (utm && utm.utmMedium) || null,
+      utm_campaign: (utm && utm.utmCampaign) || null,
       contact_name: lead.name,
       contact_email: email,
       contact_phone: phone,
@@ -246,7 +249,7 @@ async function logLeadToSupabase(lead) {
   }
 }
 
-async function logReadyLeadToSupabase(lead) {
+async function logReadyLeadToSupabase(lead, utm) {
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
     console.error('Supabase env vars not set — ready lead captured but not written to Supabase:', lead);
     return;
@@ -260,6 +263,9 @@ async function logReadyLeadToSupabase(lead) {
     ].filter(Boolean);
     const { error } = await supabase.from('leads').insert({
       lead_source: 'Website Widget',
+      utm_source: (utm && utm.utmSource) || null,
+      utm_medium: (utm && utm.utmMedium) || null,
+      utm_campaign: (utm && utm.utmCampaign) || null,
       timeline: lead.timeline || null,
       status: 'Qualified',
       notes: `ZIP: ${lead.zip}` + (noteParts.length ? ' | ' + noteParts.join(' | ') : ''),
@@ -295,6 +301,14 @@ module.exports = async function handler(req, res) {
   // request arrives with no body or an unrecognized Content-Type, and
   // destructuring undefined throws outside this function's try/catch below.
   let messages = req.body && req.body.messages;
+  // UTM data the widget captured from the page URL (or sessionStorage, if the
+  // visitor navigated to a different page since landing). Entirely optional —
+  // a visitor who arrived with no tags at all just gets null values here,
+  // same as before this was added.
+  const utm = (req.body && req.body.utm) || {};
+  const utmSource = typeof utm.utm_source === 'string' ? utm.utm_source.slice(0, 100) : null;
+  const utmMedium = typeof utm.utm_medium === 'string' ? utm.utm_medium.slice(0, 100) : null;
+  const utmCampaign = typeof utm.utm_campaign === 'string' ? utm.utm_campaign.slice(0, 100) : null;
 
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: 'messages array required' });
@@ -350,10 +364,10 @@ module.exports = async function handler(req, res) {
       for (const block of toolUseBlocks) {
         if (block.name === 'log_lead') {
           await sendLeadEmail(block.input);
-          await logLeadToSupabase(block.input);
+          await logLeadToSupabase(block.input, { utmSource, utmMedium, utmCampaign });
         } else if (block.name === 'log_ready_lead') {
           await sendReadyLeadEmail(block.input);
-          await logReadyLeadToSupabase(block.input);
+          await logReadyLeadToSupabase(block.input, { utmSource, utmMedium, utmCampaign });
         }
         toolResults.push({
           type: 'tool_result',
