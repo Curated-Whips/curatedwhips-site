@@ -179,6 +179,10 @@ button:focus-visible {
   justify-content: center;
   margin-right: -6px;
 }
+.nav-toggle-icon {
+  width: 26px;
+  height: auto;
+}
 
 @media (max-width: 860px) {
   nav[aria-label="Primary"] {
@@ -200,7 +204,7 @@ button:focus-visible {
   .nav-links a { display: block; padding: 14px 0; width: 100%; border-bottom: 1px solid var(--line-light); }
   .nav-links a[aria-current="page"] { border-bottom: 1px solid var(--brass); }
   .nav-links .nav-cta { margin-top: 12px; text-align: center; justify-content: center; }
-  .nav-toggle { display: flex; }
+  .nav-toggle { display: flex; margin-left: auto; }
 }
 
 /* ============================================
@@ -255,9 +259,21 @@ button:focus-visible {
 .hero-grid {
   display: grid;
   grid-template-columns: 1.1fr 0.9fr;
-  gap: 56px;
+  column-gap: 56px;
   align-items: center;
+  grid-template-areas:
+    "eyebrow logo"
+    "heading logo"
+    "sub logo"
+    "actions logo"
+    "phone logo";
 }
+.hero-grid > .eyebrow { grid-area: eyebrow; }
+.hero-grid > h1 { grid-area: heading; }
+.hero-grid > .hero-sub { grid-area: sub; }
+.hero-grid > .hero-actions { grid-area: actions; }
+.hero-grid > .hero-phone { grid-area: phone; align-self: start; }
+.hero-grid > .seal-wrap { grid-area: logo; }
 .hero h1 {
   font-size: clamp(2.4rem, 5vw, 3.6rem);
   color: var(--white);
@@ -285,29 +301,42 @@ button:focus-visible {
 }
 .hero-phone a { color: var(--brass-light); font-weight: 600; }
 
-@media (max-width: 860px) {
-  .hero-grid { grid-template-columns: 1fr; }
-  .hero { padding: 56px 0 72px; }
-}
-
 /* ============================================
    Logo mark — brand signature image
    ============================================ */
 .seal-logo {
   width: 220px;
-  height: 220px;
-  border-radius: 50%;
+  height: auto;
   flex-shrink: 0;
-  box-shadow: 0 0 0 1px var(--line-light);
 }
 .seal-logo--small {
-  width: 140px;
-  height: 140px;
-  box-shadow: 0 0 0 1px var(--line);
+  width: 220px;
+  height: auto;
 }
 .seal-wrap {
   display: flex;
   justify-content: center;
+}
+
+@media (max-width: 860px) {
+  .hero-grid {
+    grid-template-columns: 1fr auto;
+    column-gap: 16px;
+    row-gap: 0;
+    align-items: start;
+    grid-template-areas:
+      "eyebrow eyebrow"
+      "heading heading"
+      "sub sub"
+      "actions logo"
+      "phone phone";
+  }
+  .hero { padding: 56px 0 72px; }
+  .hero-actions { flex-direction: column; align-items: flex-start; margin-bottom: 20px; }
+  .hero-actions .btn { width: 100%; }
+  .seal-wrap { margin-top: 4px; justify-content: flex-end; }
+  .seal-logo { width: 84px; }
+  .hero-phone { margin-top: 16px; }
 }
 
 /* ============================================
@@ -546,11 +575,11 @@ button:focus-visible {
   margin-bottom: 12px;
   display: block;
 }
-.bio-tagline {
+.bio-copy .bio-tagline {
   font-family: var(--font-display);
   font-size: 1.3rem;
-  font-weight: 600;
-  color: var(--ink);
+  font-weight: 700;
+  color: var(--brass);
   margin: 0 0 8px;
 }
 .bio-copy h3 {
@@ -576,7 +605,7 @@ button:focus-visible {
   .bio-media { align-items: center; gap: 16px; margin-bottom: 8px; }
   .monogram { width: 100px; height: 100px; font-size: 1.7rem; }
   .headshot { width: 120px; height: 120px; }
-  .seal-logo--small { width: 92px; height: 92px; }
+  .seal-logo--small { width: 120px; height: auto; }
 }
 
 /* ============================================
