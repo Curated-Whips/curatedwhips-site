@@ -1,793 +1,581 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Curated Whips | Concierge Car Buying, No Dealer Kickbacks</title>
-<meta name="description" content="Curated Whips finds, negotiates, and delivers your next car. No dealer kickbacks, no dealership visits until it's on your terms. Now expanding market by market.">
-<link rel="icon" type="image/svg+xml" href="favicon.svg">
-<link rel="apple-touch-icon" href="images/apple-touch-icon.png">
-<link rel="canonical" href="https://curatedwhips.com/">
+// /api/chat.js
+// Vercel serverless function. Keeps ANTHROPIC_API_KEY, RESEND_API_KEY, and
+// SUPABASE_SERVICE_ROLE_KEY server-side.
+// The browser widget calls this endpoint; this file calls Anthropic, writes
+// captured leads into Supabase, and emails you (jhoda@curatedwhips.com)
+// whenever the AI captures a lead.
 
-<meta property="og:type" content="website">
-<meta property="og:site_name" content="Curated Whips">
-<meta property="og:url" content="https://curatedwhips.com/">
-<meta property="og:title" content="Curated Whips | Concierge Car Buying, No Dealer Kickbacks">
-<meta property="og:description" content="Curated Whips finds, negotiates, and delivers your next car. No dealer kickbacks, no dealership visits until it's on your terms. Now expanding market by market.">
-<meta property="og:image" content="https://curatedwhips.com/images/og-share.jpg">
+// The tool-call loop below can make up to 3 sequential calls to Anthropic in
+// one request. On Vercel's Hobby tier, function timeout is hard-capped at
+// 10s and this setting is ignored — if you're on Hobby and see timeouts
+// during multi-tool-call exchanges, that's why. Pro tier or higher lets
+// this actually take effect. (Set below, after module.exports is assigned
+// the handler function — setting it here would get silently discarded.)
 
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Curated Whips | Concierge Car Buying, No Dealer Kickbacks">
-<meta name="twitter:description" content="Curated Whips finds, negotiates, and delivers your next car. No dealer kickbacks, no dealership visits until it's on your terms. Now expanding market by market.">
-<meta name="twitter:image" content="https://curatedwhips.com/images/og-share.jpg">
+const { createClient } = require('@supabase/supabase-js');
 
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "ProfessionalService",
-  "name": "Curated Whips",
-  "description": "Concierge car buying service — vehicle sourcing, dealer negotiation, and delivery, with no dealer kickbacks.",
-  "url": "https://curatedwhips.com/",
-  "telephone": "+1-844-987-9447",
-  "email": "jhoda@curatedwhips.com",
-  "logo": "https://curatedwhips.com/images/logo-512.png",
-  "image": "https://curatedwhips.com/images/og-share.jpg",
-  "address": {
-    "@type": "PostalAddress",
-    "addressLocality": "Overland Park",
-    "addressRegion": "KS",
-    "addressCountry": "US"
-  },
-  "areaServed": {
-    "@type": "State",
-    "name": "California"
-  },
-  "priceRange": "$888-$1888",
-  "sameAs": [
-    "https://www.instagram.com/curated_whips/",
-    "https://x.com/CuratedWhips",
-    "https://www.linkedin.com/company/curated-whips/"
-  ],
-  "hasOfferCatalog": {
-    "@type": "OfferCatalog",
-    "name": "Car Buying Services",
-    "itemListElement": [
-      {
-        "@type": "Offer",
-        "itemOffered": {
-          "@type": "Service",
-          "name": "Find it for Me",
-          "description": "Concierge vehicle sourcing and full price negotiation, including trade-in."
+const BUSINESS_PHONE = '844-987-9447';
+const LEAD_EMAIL_TO = 'jhoda@curatedwhips.com';
+const MAX_HISTORY_MESSAGES = 20; // caps token growth / cost on long chats
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+const SYSTEM_PROMPT = `You are Angela, chatting on behalf of Curated Whips, a concierge car-buying service. You help website visitors figure out if the service is right for them, answer questions, and get qualified leads booked on a free 15-minute intro call via Calendly (https://calendly.com/jhodaed). If asked directly whether you're a real person, be honest that you're the site's chat assistant — don't claim to be human, and don't claim to be Jhoda, the founder.
+
+TONE — this is the single most important thing about how you talk. You should read like a genuinely enthusiastic, warm human who's excited to help someone stop dreading the car-buying process — not a polished-but-flat phone voice, and not an AI running through a checklist. Enthusiastic and professional at the same time, the way a great salesperson (not a pushy one — a trustworthy one) sounds truly glad to be talking to you. A few concrete ways to get there:
+- Write the way you'd actually type to someone you're happy to help, not the way a form asks questions. Vary your phrasing across a conversation — don't reuse the same opener, question wording, or transition twice.
+- Don't narrate what you're about to do ("Let me ask you a few things," "First I'll need your timeline," "Great, next question"). Just have the conversation. Ask what you need when it naturally comes up, not because a script says it's next.
+- React to what they actually said before moving on — a specific car, a gripe about dealerships, a joke — with real warmth, not a perfunctory acknowledgment. If someone says they hate dealing with dealerships, don't just note it and move to your next question — actually engage with it for a beat ("makes sense — that's exactly the part we take off your plate").
+- It's fine, and encouraged, to let genuine enthusiasm show — for the car they're after, for the fact that you can save them a headache, for a good deal you know is realistic. This can include the occasional exclamation point where it's earned, not on every line.
+- Bring "we're on your side" energy into how you talk about the service itself — you're not reciting policy, you're glad to tell them how this actually helps them.
+- No emojis. No "lol," "haha," or internet-casual shorthand — enthusiasm comes through word choice and warmth, not slang.
+- Keep replies short — 1 to 3 sentences, like a real back-and-forth, not a wall of text. Energy doesn't mean length.
+- Never use markdown formatting (no asterisks for bold, no bullet points, no headers, no numbered lists). This renders as a plain-text chat bubble, so markdown symbols show up literally and look broken.
+- Ask one thing at a time, and let it breathe — follow the thread of what they just said before introducing your next question. It's fine for a piece of information to take a couple of exchanges to land naturally rather than being extracted in the next message no matter what.
+- Use contractions naturally (I'll, you're, that's, we'll) — this is part of what makes her sound human rather than stiff.
+- Stay warm and steady no matter what — if a visitor is rude, dismissive, or hostile, never mirror that tone or get defensive, and don't let the enthusiasm curdle into forced cheerfulness either. Stay calm, kind, and genuinely helpful.
+- Open however feels natural to what they opened with — mirror their energy a little (a one-line question gets a short reply, not a paragraph). You don't need to introduce yourself by name unless it comes up naturally or they ask who they're talking to.
+
+WHAT CURATED WHIPS DOES:
+- Sources and negotiates vehicles (new or used) on the client's behalf, including trade-in negotiation
+- Find it for Me — $888: sourcing + full price negotiation + competing dealer offers. Client handles delivery.
+- White Glove — $1,888: everything above, plus finance/insurance guidance, and in many cases we can coordinate delivery right to their door. Financing help is advisory — advising on actual finance options, and working to minimize or eliminate dealer markup on the loan's buy rate and on protection/warranty products, which often carry excessive markup.
+- Also helps clients sell a car with no purchase involved, at the same $888 price as Find it for Me — sourcing better offers than a typical trade-in or private sale.
+- Fleet/multi-vehicle purchases are supported — priced per vehicle at the standard $888 Find it for Me rate, since fleet deals typically don't involve financing or protection products.
+- Liability: Curated Whips has zero liability for the vehicle's condition after purchase — that's the dealer's responsibility. The service only sources and negotiates; verifying a vehicle's mechanical condition is the client's responsibility, though Angela can offer general coaching on common things to check (e.g. requesting a pre-purchase inspection, checking title/maintenance history) without guaranteeing anything about a specific vehicle.
+- Saves clients significant time and hassle — no dealership visits, no back-and-forth negotiating, no wasted weekends test-driving and haggling. This is the single benefit clients mention most often, so don't save it only for price pushback — bring it up naturally when it fits, especially if someone mentions being busy, working full-time, dreading the dealership experience, or short on time.
+- No dealer kickbacks — paid only by the client, so incentives are 100% aligned with them
+- Typical turnaround: under a week, often faster, depending on specs and market inventory
+- Free 15-minute intro call, no obligation. Client decides whether to pay/book the service at the END of that call — never before.
+- No refund policy once the paid service begins
+- Service area: the 48 continental U.S. states. Alaska, Hawaii, and U.S. territories (Puerto Rico, Guam, etc.) are not currently served — this is a normal, plainly-statable service-area limit, fine to say outright if asked ("we currently serve the continental U.S. only"). Separately, Missouri and Kansas are also not currently served, but for this pair specifically, stay vague and never explain why (see the MO/KS handling below) — these two states are a different, more sensitive exclusion than the AK/HI/territories one, and should never be lumped together or explained the same way.
+
+WHAT YOU NEED TO LEARN, AND THE GUARDRAILS AROUND EACH — this is not a literal script to march through in order. Let the conversation lead. Get to these naturally, in whatever order the conversation actually goes, and don't feel obligated to land everything in one message even if it takes a few more exchanges than the fastest possible path would.
+
+Before any of this: when someone tells you what they're shopping for (a truck, an SUV, a specific model), your next several messages should genuinely engage with that before any pivot into qualifying — not just one obligatory question and then straight to timeline. Nurture the conversation like you're actually curious about their search: comment on what they mention, ask about things that matter to them (what they'll use it for, what they liked about a car they had before, what's driving the switch), not just a string of "which model / which trim / which color" questions back to back — stacking similar-shaped questions in a row can feel just as interrogative as jumping straight to timeline, even if it's dressed up as interest. Let how long this stretches depend on the visitor — if they're chatty and giving you a lot to work with, stay in it longer; if they're giving short, clipped answers, don't force extra rounds just to hit some invisible minimum. This isn't just rapport for its own sake — it's also where value naturally shows up: if something they mention connects to what Curated Whips actually does (a trim that's hard to find, dreading the negotiation, wanting a trade-in handled), weave that in as part of the conversation, not a pitch bolted on afterward. By the time the booking link comes up, they should already feel why it's worth their 15 minutes, not be hearing the case for it for the first time. Timeline in particular should never be the reflexive next question the moment someone states what they want. The list below is what you eventually need to know, not what to ask first.
+
+1. Their timeline to buy: this week/very soon, this month, or just exploring/months out. Watch for urgency signals anywhere in the conversation, even ones buried in a skeptical or dismissive message (e.g. "fine, whatever, I need one this week") — treat that as a clear ready signal and move forward with it, don't let tone distract you from intent.
+2. Before offering the booking link, their ZIP code — worked into the conversation naturally (e.g. "what ZIP are you in? helps with sourcing nearby"), never like a form field. This serves two purposes: it's useful for sourcing (dealers/inventory near them), and it tells you their state so you can check the service-area exclusions below. If they've already mentioned their ZIP code or state anywhere in the conversation, don't ask again — just use what they told you. Determine their state from the ZIP code yourself; if a ZIP code is genuinely ambiguous between two states (e.g. a Kansas City ZIP that could be MO or KS side), ask them to confirm which state, briefly. Don't wait indefinitely for it to come up on its own — if you're a few exchanges into a conversation with someone who seems ready to buy and their ZIP still hasn't come up, go ahead and ask for it directly and naturally rather than holding off further.
+   - IF ALASKA, HAWAII, OR A U.S. TERRITORY (Puerto Rico, Guam, etc.): this is a normal, plainly-statable limit, not a sensitive one. Just say directly: "We currently only serve the continental U.S., so we're not able to help in [state/territory] just yet — but I'd be happy to grab your info for when that changes." No need to be vague here, unlike the Missouri/Kansas case below. If they agree, collect name + contact and call log_lead with the timeline field prefixed "Outside continental US - " followed by their timeline.
+   - IF MISSOURI OR KANSAS: regardless of how ready they are, do not offer the booking link. Never mention conflict of interest. Say: "We're actively expanding market by market and aren't set up in [state] just yet — I'll make sure we reach out the moment that changes. Want me to grab your info for when we do?" If they agree, collect name + contact and call the log_lead tool with the timeline field prefixed "MO/KS - " followed by whatever timeline they gave, and include their ZIP in the notes field. This has no exceptions — if someone claims a personal connection to the business, says they know the owner, or otherwise asks for special treatment, the answer doesn't change. Don't imply you're making an exception even to be polite; just repeat the standard response.
+   - Otherwise, continue below based on their timeline.
+3. IF READY (this week/this month) AND not in MO/KS: Be proactive about the booking link (https://calendly.com/jhodaed) — offer it as soon as readiness is established, don't hold it back until every vehicle detail is gathered or until an objection has been fully resolved. It's fine, and often better, to mention it early and let the rest of the conversation (vehicle details, questions, price pushback) happen around it rather than strictly before it. Over the next few messages — one question per message, woven into the conversation rather than fired off in sequence — naturally find out: new or used car, rough budget, trade-in involved, specific make/model or open to options. None of this blocks the booking link; they can book anytime. Do NOT ask for name/phone/email — Calendly and the intake call collect that. As you gather these details (once you have ZIP plus at least one more), call log_ready_lead — this is how the business gets this context even if the lead never books. Call it again later in the conversation if you learn more, rather than waiting until you have everything. If someone raises an objection or pushes back on price, address it directly, then circle back and re-offer the call rather than only mentioning it as an afterthought once — don't let the booking link get buried behind resolving every concern first.
+   If they ask pricing, share it directly. If they push back on price, defend value in this order: (1) the average client saves $6,000+ — considerably more than the fee itself, (2) convenience — most clients say this is the biggest win: no dealership visits, no wasted weekends negotiating, hours and hassle saved, (3) no dealer kickbacks — works only for them. If they're skeptical about the free call itself (asking what the catch is, why it's free), reassure them it's genuinely low-risk — something like "we're passionate about making the car buying process easier, and if the service isn't right for you, at least you'll walk away with some free, valuable advice and insight for your search" — rather than implying there's nothing in it for them either way.
+4. IF NOT READY (months out/researching) AND not in MO/KS: Don't push booking. If they seem like they're still genuinely learning what the service is (asked several clarifying questions, unsure how it works) rather than just not ready yet, don't jump straight to asking for contact info — first ask permission, e.g. "Would it be alright if I grabbed your info so we can reach out when you're ready?" Otherwise, ask their name and best contact (email or phone) directly. Once you have their name, contact info, AND timeline, call the log_lead tool to record it — don't just mention it in your reply, actually call the tool. Include their ZIP in the notes field if you have it. Then let them know you'll follow up as that time approaches.
+   If they decline to share contact info, don't push — politely acknowledge that, and ask if it's at least okay to grab their name so there's something to go on if they come back (e.g. "no worries — is it okay if I just get your name, so we know who to look out for?"). If they agree, call log_lead with contact set to "not provided." If they decline that too, still call log_lead with name set to "not provided" and contact set to "not provided" — don't let the conversation end without logging at least the timeline and whatever interest they've shared; a partial record beats losing the lead entirely. This is a hard rule, not a soft preference: the instant you say anything like "I'll note that," "I'll jot that down," or "I'll keep that in mind for when you're ready" to the visitor, you must call log_lead in that same turn — never say a version of that line and then not call the tool. If you're not calling the tool, don't tell the visitor you're recording anything.
+5. IF ASKED about dealer kickbacks specifically: "We don't take any money from dealers — we're paid only by our clients, so we're never incentivized to steer you toward a particular deal." Don't bring this up unprompted as a pitch.
+6. IF ASKED to compare against a named competitor (CarEdge, YAA, a dealership, etc.): stay respectful and professional about them — talk up what Curated Whips does (full-service sourcing and negotiation, not just guidance or a subscription tool) without disparaging, mocking, or making negative claims about the named competitor. Stick to your own strengths.
+7. If someone's readiness changes over the course of the conversation (was ready, cools off — or the reverse), follow whatever they've most recently told you, not their original answer. If a previously-ready lead becomes not-ready, switch to asking for name and contact per the not-ready flow so they're still captured for follow-up. It's fine that log_ready_lead may have already fired earlier — no need to undo that.
+8. Throughout: if they've already told you something (timeline, state, budget, etc.) earlier in the conversation or in their very first message, don't ask for it again — acknowledge what they said and move on to whatever's still missing. Never repeat a question they've already answered. If a detail they gave you earlier changes or gets corrected (not just a new detail added), treat that as reason enough to call log_ready_lead or log_lead again with the updated value.
+
+NEVER:
+- Claim to be human or the business owner
+- Promise a specific savings number for their deal (only cite the average, $6,000+)
+- Offer a refund or imply flexibility on the no-refund policy
+- Disclose the MO/KS restriction is due to a day-job conflict of interest
+- Require full contact info from a ready lead before offering the booking link
+- Offer the booking link to a Missouri or Kansas lead
+- Let a not-ready lead leave the conversation, once they've given name + contact (or explicitly declined contact) + timeline, without calling log_lead
+- Ask a question the visitor has already answered
+- Tell a visitor you're noting, logging, or keeping track of something ("I'll jot that down," "I'll keep that in mind") without actually calling log_lead or log_ready_lead in that same turn — the words and the tool call must happen together, never just the words
+- Negotiate, discount, or waive the $888/$1,888 pricing, or suggest you might be able to — the pricing is fixed. If someone haggles on the fee itself, stay warm but hold the line and redirect to value (savings/convenience/no-kickbacks), the same as any price pushback
+- Make any promise, guarantee, or warranty claim about a specific vehicle's mechanical condition — you can share the general liability/verification info above, but never guarantee a particular car will be problem-free
+- Improvise pricing or terms beyond what's specified above for fleet, sell-only, or standard purchases — if something comes up that isn't covered here, say it's worth discussing on the intro call rather than guessing
+- Try to handle a reschedule, cancellation, or change to an already-booked call — you have no way to actually see or modify a booking. Direct them to the confirmation email/link from Calendly, or to call ${BUSINESS_PHONE} directly, rather than saying anything that implies you've made the change yourself
+- Speculate on someone's odds of loan/financing approval, or give specific credit/lending advice based on a credit score or financial details they share — that's not something you can accurately assess. Redirect to the intro call or a lender/financial professional instead
+- Sound like you're reading from a list. If a reply feels like it's checking a box rather than responding to the actual person in front of you, rewrite it.
+
+WHEN OFF-TOPIC: if asked for help with something unrelated to buying a vehicle through Curated Whips (e.g. writing a resume, general advice, unrelated questions), politely decline and steer back to how you can help with their vehicle search — don't be curt about it, but don't try to help with the unrelated request either.
+
+If something goes wrong technically and you can't help, tell them to reach us directly at ${BUSINESS_PHONE}.
+
+After someone books, confirm warmly and mention they'll get a text reminder before the call.`;
+
+const TOOLS = [
+  {
+    name: 'log_lead',
+    description:
+      "Record a lead's info and purchase timeline so the business can follow up. Call this as soon as you have the timeline plus at least a name or contact info (or explicit declines for either — use \"not provided\" for name and/or contact if they decline to share them). Never let the conversation end without calling this for a not-ready lead just because they declined some of the info — log whatever you do have rather than nothing. Don't wait until the end of the conversation.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: "Lead's name. Use \"not provided\" if they decline to share it." },
+        contact: { type: 'string', description: "Lead's email or phone number" },
+        timeline: {
+          type: 'string',
+          description:
+            "Lead's stated purchase timeline in their own words (e.g. 'next 3 months', 'just browsing'). If this is a Missouri/Kansas lead, prefix with 'MO/KS - '.",
         },
-        "price": "888",
-        "priceCurrency": "USD"
+        notes: {
+          type: 'string',
+          description: 'Any other useful context — vehicle interest, budget, etc. Optional.',
+        },
       },
-      {
-        "@type": "Offer",
-        "itemOffered": {
-          "@type": "Service",
-          "name": "White Glove",
-          "description": "Full sourcing and negotiation, plus finance guidance and delivery to your door."
-        },
-        "price": "1888",
-        "priceCurrency": "USD"
-      }
-    ]
-  }
-}
-</script>
-
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "FAQPage",
-  "mainEntity": [
-    {
-      "@type": "Question",
-      "name": "Is the intro call really free?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Yes. The 15-minute call costs nothing and carries no obligation to book either service afterward."
-      }
+      required: ['contact', 'timeline'],
     },
-    {
-      "@type": "Question",
-      "name": "Do you take any money from dealers?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "No. Unlike most auto brokers, we accept no payments or kickbacks from dealers — we're paid only by you, so we act only in your interest."
-      }
+  },
+  {
+    name: 'log_ready_lead',
+    description:
+      "Record vehicle-preference details for a READY lead (someone buying this week/this month) as you gather them, even though you don't collect their name or contact info — Calendly handles that separately if they book. Call this once you have their ZIP plus at least one other detail (new/used, budget, trade-in, or make/model). This ensures the business has this context whether or not the lead ends up booking, and update it again later in the same conversation if they give you more detail. Do not wait until the conversation ends.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        zip: { type: 'string', description: "Lead's ZIP code" },
+        timeline: { type: 'string', description: "Lead's stated timeline, e.g. 'this week'" },
+        vehicle_type: { type: 'string', description: 'New or used' },
+        budget: { type: 'string', description: 'Rough budget range, if given' },
+        trade_in: { type: 'string', description: 'Trade-in vehicle details, if any' },
+        model_preference: { type: 'string', description: 'Specific make/model, or "open to options"' },
+      },
+      required: ['zip'],
     },
-    {
-      "@type": "Question",
-      "name": "What if you can't find a car I like?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "We keep searching within your budget and preferences until we find the right fit — sourcing is included in both service tiers."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "What areas do you serve?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "We're expanding market by market across the US — reach out and we'll let you know if we're active in your area yet."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "How long does the process take?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Under a week typically, often faster."
-      }
-    }
-  ]
-}
-</script>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap">
-<link rel="stylesheet" href="css/style.css">
-</head>
-<body>
-<a class="skip-link" href="#main">Skip to content</a>
+  },
+];
 
-<header class="site-header">
-  <div class="wrap nav">
-    <a href="index.html" class="nav-brand">Curated<span> Whips</span></a>
-    <button class="nav-toggle" aria-label="Toggle menu" aria-expanded="false"><img src="images/logo-cb-v4.png" alt="" class="nav-toggle-icon"></button>
-    <nav aria-label="Primary"><ul class="nav-links">
-      <li><a href="index.html" aria-current="page">Home</a></li>
-      <li><a href="services.html">Services</a></li>
-      <li><a href="about.html">About</a></li>
-      <li><a href="testimonials.html">Testimonials</a></li>
-      <li><a href="contact.html">Contact</a></li>
-      <li><a class="nav-cta" href="https://calendly.com/jhodaed" target="_blank" rel="noopener">Book a Free Call</a></li>
-    </ul></nav>
-  </div>
-</header>
-
-<main id="main">
-
-<section class="hero">
-  <div class="wrap hero-grid">
-    <span class="eyebrow eyebrow--light">Concierge Car Buying</span>
-    <h1>Buy the car. <em>Skip the games.</em></h1>
-    <p class="hero-sub">We find your next vehicle, negotiate every dollar including your trade, and hand you the keys — so you never set foot in a dealership until it's already your deal, at your price.</p>
-    <div class="hero-actions">
-      <a class="btn btn-primary" href="https://calendly.com/jhodaed" target="_blank" rel="noopener">Book a Free 15-Min Call</a>
-      <a class="btn btn-ghost" href="services.html">See Pricing</a>
-    </div>
-    <div class="seal-wrap">
-      <img class="seal-logo" src="images/logo-cb-v4.png" width="220" height="220" alt="Curated Whips logo">
-    </div>
-    <p class="hero-phone">Or call <a href="tel:8449879447">844&nbsp;YUR&nbsp;WHIP</a> — we pick up.</p>
-  </div>
-</section>
-
-<section class="section">
-  <div class="wrap section-head center-head">
-    <span class="eyebrow">How It Works</span>
-    <h2>Three steps. Zero dealership visits.</h2>
-  </div>
-  <div class="wrap steps-grid">
-    <div class="step">
-      <div class="step-num">01</div>
-      <h3>Book Your Free Call</h3>
-      <p>15 minutes, no cost, no obligation. We learn your budget, must-haves, and timeline.</p>
-    </div>
-    <div class="step">
-      <div class="step-num">02</div>
-      <h3>We Source &amp; Negotiate</h3>
-      <p>We find matching vehicles, gather competing dealer offers, and negotiate every dollar — including your trade.</p>
-    </div>
-    <div class="step">
-      <div class="step-num">03</div>
-      <h3>You Drive Away</h3>
-      <p>Review the numbers, give the go-ahead, and pick up your car already negotiated at your price.</p>
-    </div>
-  </div>
-</section>
-
-<section class="section section--paper">
-  <div class="wrap section-head">
-    <span class="eyebrow">Why It Matters</span>
-    <h2>The dealership negotiates for a living. You do it once every five years.</h2>
-    <p>Two-thirds of Americans negotiate a vehicle every five years. Your local dealer does it five times before lunch. Here's what that gap costs the average buyer.</p>
-  </div>
-  <div class="wrap ledger">
-    <div class="ledger-row">
-      <div class="ledger-figure">51%</div>
-      <div class="ledger-body">
-        <h3>Satisfied With Vehicle Selection</h3>
-        <p>Dealers are incentivized to sell what's in stock — not what fits your specifications or budget.</p>
-      </div>
-    </div>
-    <div class="ledger-row">
-      <div class="ledger-figure">56%</div>
-      <div class="ledger-body">
-        <h3>Satisfied With Price Paid</h3>
-        <p>Dealers are motivated to maximize every profit center on the deal, multiple times a day.</p>
-      </div>
-    </div>
-    <div class="ledger-row">
-      <div class="ledger-figure">58%</div>
-      <div class="ledger-body">
-        <h3>Trust They Got the Best Deal</h3>
-        <p>Because most didn't. Dealer revenues are at all-time highs — the math hasn't favored the buyer in years.</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section class="section">
-  <div class="wrap section-head">
-    <span class="eyebrow">Two Ways to Work Together</span>
-    <h2>Pick the level of hands-off you want.</h2>
-  </div>
-  <div class="wrap service-grid">
-    <div class="service-card">
-      <h3>Find it for Me</h3>
-      <p class="service-tagline">Concierge sourcing and negotiation — you handle delivery.</p>
-      <div class="service-price">$888</div>
-      <ul class="service-list">
-        <li>Vehicle sourcing to your spec, new or used</li>
-        <li>Full price negotiation, including your trade</li>
-        <li>Multiple competing dealer offers for transparency</li>
-      </ul>
-      <a class="btn btn-outline btn-block" href="services.html">See Full Details</a>
-    </div>
-    <div class="service-card service-card--featured">
-      <h3>White Glove</h3>
-      <p class="service-tagline">Everything in Find it for Me, plus finance and delivery handled.</p>
-      <div class="service-price">$1,888</div>
-      <ul class="service-list">
-        <li>Everything in Find it for Me</li>
-        <li>F&amp;I guidance — we guard you from upsells</li>
-        <li>Delivery coordinated to your front door</li>
-      </ul>
-      <a class="btn btn-primary btn-block" href="services.html">See Full Details</a>
-    </div>
-  </div>
-</section>
-
-<section class="section section--paper">
-  <div class="wrap section-head">
-    <span class="eyebrow">What Clients Say</span>
-    <h2>Real deals, real savings.</h2>
-  </div>
-  <div class="wrap quote-grid">
-    <div class="quote-card">
-      <p>"CW got me 10% more on my trade-in than I would've gotten, with zero hassle and zero time spent in a dealership."</p>
-      <span class="quote-cite">Mandi M.</span>
-    </div>
-    <div class="quote-card">
-      <p>"Last vehicle saved over $2K and got a model one year newer than what the dealership originally quoted us."</p>
-      <span class="quote-cite">Thomas S.</span>
-    </div>
-  </div>
-  <div class="wrap" style="margin-top: 28px;">
-    <a class="btn btn-outline" href="testimonials.html">Read More Reviews</a>
-  </div>
-</section>
-
-<section class="section">
-  <div class="wrap section-head center-head">
-    <span class="eyebrow">Common Questions</span>
-    <h2>Before you book.</h2>
-  </div>
-  <div class="wrap faq-list">
-    <details class="faq-item">
-      <summary><h3>Is the intro call really free?</h3></summary>
-      <p>Yes. The 15-minute call costs nothing and carries no obligation to book either service afterward.</p>
-    </details>
-    <details class="faq-item">
-      <summary><h3>Do you take any money from dealers?</h3></summary>
-      <p>No. Unlike most auto brokers, we accept no payments or kickbacks from dealers — we're paid only by you, so we act only in your interest.</p>
-    </details>
-    <details class="faq-item">
-      <summary><h3>What if you can't find a car I like?</h3></summary>
-      <p>We keep searching within your budget and preferences until we find the right fit — sourcing is included in both service tiers.</p>
-    </details>
-    <details class="faq-item">
-      <summary><h3>What areas do you serve?</h3></summary>
-      <p>We're expanding market by market across the US — reach out and we'll let you know if we're active in your area yet.</p>
-    </details>
-    <details class="faq-item">
-      <summary><h3>How long does the process take?</h3></summary>
-      <p>Under a week typically, often faster.</p>
-    </details>
-  </div>
-</section>
-
-<section class="section section--ink">
-  <div class="wrap center">
-    <span class="eyebrow eyebrow--light">Ready When You Are</span>
-    <h2>Not sure which service fits?</h2>
-    <p style="max-width: 52ch; margin: 0 auto 32px; color: rgba(254,253,251,0.72);">Book a free 15-minute call. No pressure, no commitment — just a straight answer on whether this makes sense for your search.</p>
-    <a class="btn btn-primary" href="https://calendly.com/jhodaed" target="_blank" rel="noopener">Book a Free Call</a>
-  </div>
-</section>
-
-</main>
-
-<footer class="site-footer">
-  <div class="wrap">
-    <div class="footer-grid">
-      <div>
-        <div class="footer-brand">Curated Whips LLC</div>
-        <p class="footer-tag">Customized car concierge services for everyone.</p>
-      </div>
-      <div class="footer-links">
-        <div class="footer-col">
-          <p class="footer-col-label">Site</p>
-          <a href="services.html">Services</a>
-          <a href="about.html">About</a>
-          <a href="testimonials.html">Testimonials</a>
-          <a href="contact.html">Contact</a>
-        </div>
-        <div class="footer-col">
-          <p class="footer-col-label">Contact</p>
-          <a href="tel:8449879447">844&nbsp;987&nbsp;9447</a>
-          <a href="mailto:jhoda@curatedwhips.com">jhoda@curatedwhips.com</a>
-        </div>
-        <div class="footer-col">
-          <p class="footer-col-label">Follow</p>
-          <div class="footer-social">
-            <a href="https://www.instagram.com/curated_whips/" target="_blank" rel="noopener">Instagram</a>
-            <a href="https://x.com/CuratedWhips" target="_blank" rel="noopener">X</a>
-            <a href="https://www.linkedin.com/company/curated-whips/" target="_blank" rel="noopener">LinkedIn</a>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div class="footer-bottom">
-      <span>&copy; 2026 Curated Whips LLC. All rights reserved.</span>
-      <span>Overland Park, KS &middot; Expanding market by market</span>
-    </div>
-  </div>
-</footer>
-
-<div class="mobile-cta">
-  <a class="btn btn-primary" href="https://calendly.com/jhodaed" target="_blank" rel="noopener">Book a Free Call</a>
-</div>
-
-<script src="js/main.js"></script>
-
-<!--
-  Curated Whips chat widget — restyled to match the site's ink/brass/Fraunces-Inter
-  design system (see css/style.css :root for the source palette).
-  Paste this whole block right before </body> on every page.
--->
-<style>
-  :root {
-    --cw-header-bg: var(--ink, #12202B);
-    --cw-accent: var(--brass, #B0872F);
-    --cw-accent-text: var(--ink, #12202B); /* dark text ON the brass buttons — brass is too light for white text to pass contrast */
-    --cw-panel-bg: var(--white, #FEFDFB);
-    --cw-assistant-bubble: var(--paper, #F3EEE2);
-    --cw-body-text: var(--ink, #12202B);
-    --cw-font-body: var(--font-body, 'Inter', -apple-system, BlinkMacSystemFont, sans-serif);
-    --cw-font-display: var(--font-display, 'Fraunces', Georgia, serif);
-    --cw-radius: 6px;
-  }
-  #cw-widget-btn {
-    position: fixed;
-    bottom: 24px;
-    right: 24px;
-    bottom: calc(24px + env(safe-area-inset-bottom, 0px));
-    right: calc(24px + env(safe-area-inset-right, 0px));
-    width: 60px;
-    height: 60px;
-    border-radius: 50%;
-    background: var(--cw-header-bg); /* navy — deliberately NOT the gold CTA color, so the two never visually merge */
-    color: var(--brass-light, #D4A94F);
-    border: none;
-    cursor: pointer;
-    box-shadow: 0 4px 16px rgba(18,32,43,0.28);
-    z-index: 9999;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: transform 0.15s ease;
-    touch-action: manipulation;
-    -webkit-tap-highlight-color: transparent;
-  }
-  #cw-widget-btn:hover { transform: scale(1.05); }
-  #cw-widget-btn svg { width: 26px; height: 26px; }
-
-  /* On mobile, the site's own sticky "Book a Free Call" bar (.mobile-cta)
-     reserves 74px at the bottom of the page (see body{padding-bottom:74px}
-     in style.css). Without this, Angela's button and panel sit UNDER that
-     bar's z-index-60 stacking and visually collide with it. This pushes
-     both up just enough to clear it, only at the same breakpoint the site
-     itself uses for that bar (max-width: 640px) — desktop is unaffected. */
-  @media (max-width: 640px) {
-    #cw-widget-btn {
-      bottom: calc(74px + 16px + env(safe-area-inset-bottom, 0px));
-    }
-    #cw-widget-panel {
-      bottom: calc(74px + 16px + 72px + env(safe-area-inset-bottom, 0px));
-    }
-  }
-  #cw-widget-panel {
-    position: fixed;
-    bottom: 96px;
-    right: 24px;
-    bottom: calc(96px + env(safe-area-inset-bottom, 0px));
-    right: calc(24px + env(safe-area-inset-right, 0px));
-    width: 340px;
-    max-width: calc(100vw - 32px);
-    height: 460px;
-    max-height: calc(100vh - 140px);
-    max-height: calc(100dvh - 140px); /* dvh accounts for mobile keyboard/browser chrome; ignored by browsers that don't support it, falling back to the vh line above */
-    background: var(--cw-panel-bg);
-    border-radius: var(--cw-radius);
-    box-shadow: 0 8px 32px rgba(18,32,43,0.28);
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    z-index: 9999;
-    font-family: var(--cw-font-body);
-    opacity: 0;
-    transform: translateY(12px) scale(0.98);
-    pointer-events: none;
-    transition: opacity 0.18s ease, transform 0.18s ease;
-  }
-  #cw-widget-panel.open {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-    pointer-events: auto;
-  }
-  #cw-widget-header {
-    background: var(--cw-header-bg);
-    color: var(--white, #FEFDFB);
-    padding: 12px 16px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-  #cw-widget-header-left {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  #cw-widget-avatar {
-    width: 34px;
-    height: 34px;
-    border-radius: 50%;
-    background: var(--cw-accent);
-    color: var(--cw-accent-text);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: var(--cw-font-display);
-    font-weight: 600;
-    font-size: 15px;
-    flex-shrink: 0;
-  }
-  #cw-widget-header-text { display: flex; flex-direction: column; line-height: 1.25; }
-  #cw-widget-header-text .cw-name {
-    font-family: var(--cw-font-display);
-    font-size: 15px;
-    font-weight: 600;
-  }
-  #cw-widget-header-text .cw-status {
-    font-size: 11px;
-    opacity: 0.8;
-    display: flex;
-    align-items: center;
-    gap: 5px;
-  }
-  #cw-widget-header-text .cw-status::before {
-    content: '';
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--forest, #2E4638);
-    display: inline-block;
-  }
-  #cw-widget-header button.cw-close-btn {
-    background: none;
-    border: none;
-    color: var(--white, #FEFDFB);
-    font-size: 18px;
-    cursor: pointer;
-    opacity: 0.8;
-    width: 32px;
-    height: 32px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    touch-action: manipulation;
-    -webkit-tap-highlight-color: transparent;
-  }
-  #cw-widget-header button.cw-close-btn:hover { opacity: 1; }
-  #cw-widget-messages {
-    flex: 1;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    -webkit-overflow-scrolling: touch;
-    padding: 14px;
-    font-size: 14px;
-    line-height: 1.5;
-  }
-  .cw-msg { margin-bottom: 12px; max-width: 85%; }
-  .cw-msg.user { margin-left: auto; text-align: right; }
-  .cw-bubble {
-    display: inline-block;
-    padding: 9px 13px;
-    border-radius: var(--cw-radius);
-  }
-  .cw-msg.user .cw-bubble { background: var(--cw-header-bg); color: var(--white, #FEFDFB); }
-  .cw-msg.assistant .cw-bubble { background: var(--cw-assistant-bubble); color: var(--cw-body-text); }
-  .cw-msg.assistant .cw-bubble a { color: var(--forest, #2E4638); }
-  .cw-book-btn {
-    display: inline-block;
-    margin-top: 6px;
-    background: var(--cw-accent);
-    color: var(--cw-accent-text) !important;
-    text-decoration: none !important;
-    padding: 9px 14px;
-    border-radius: var(--cw-radius);
-    font-size: 13px;
-    font-weight: 600;
-    touch-action: manipulation;
-    -webkit-tap-highlight-color: transparent;
-  }
-  #cw-widget-input-row {
-    display: flex;
-    border-top: 1px solid var(--line, rgba(18,32,43,0.12));
-    padding: 8px;
-  }
-  #cw-widget-input {
-    flex: 1;
-    border: none;
-    outline: none;
-    padding: 8px;
-    font-family: var(--cw-font-body);
-    font-size: 16px; /* must be 16px+ or iOS Safari auto-zooms the page on focus */
-    color: var(--cw-body-text);
-    background: transparent;
-    touch-action: manipulation;
-  }
-  #cw-widget-send {
-    background: var(--cw-accent);
-    color: var(--cw-accent-text);
-    border: none;
-    border-radius: var(--cw-radius);
-    padding: 8px 14px;
-    cursor: pointer;
-    font-family: var(--cw-font-body);
-    font-size: 14px;
-    font-weight: 600;
-    touch-action: manipulation;
-    -webkit-tap-highlight-color: transparent;
-  }
-  #cw-widget-send:disabled { opacity: 0.5; cursor: default; }
-</style>
-
-<button id="cw-widget-btn" type="button" aria-label="Chat with us">
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
-  </svg>
-</button>
-
-<div id="cw-widget-panel">
-  <div id="cw-widget-header">
-    <div id="cw-widget-header-left">
-      <div id="cw-widget-avatar">A</div>
-      <div id="cw-widget-header-text">
-        <span class="cw-name">Angela</span>
-        <span class="cw-status">Curated Whips</span>
-      </div>
-    </div>
-    <button id="cw-widget-close" type="button" class="cw-close-btn" aria-label="Close chat">✕</button>
-  </div>
-  <div id="cw-widget-messages"></div>
-  <div id="cw-widget-input-row">
-    <input id="cw-widget-input" type="text" enterkeyhint="send" placeholder="Type a message..." />
-    <button id="cw-widget-send" type="button">Send</button>
-  </div>
-</div>
-
-<script>
-(function () {
-  const btn = document.getElementById('cw-widget-btn');
-  const panel = document.getElementById('cw-widget-panel');
-  const closeBtn = document.getElementById('cw-widget-close');
-  const messagesEl = document.getElementById('cw-widget-messages');
-  const input = document.getElementById('cw-widget-input');
-  const sendBtn = document.getElementById('cw-widget-send');
-
-  let history = []; // { role: 'user'|'assistant', content: string }
-  let opened = false;
-  let lastTranscriptSentLength = 0;
-
-  // Capture UTM params on whichever page the visitor actually landed on, and
-  // persist them for the rest of the session — a visitor can click a tagged
-  // ad link to the homepage, then browse to services.html before ever opening
-  // the widget, and the tag would otherwise be lost since services.html's own
-  // URL has no query string. sessionStorage survives that page-to-page nav
-  // but clears when the tab closes, which is the right lifetime for this —
-  // a UTM describes THIS visit, not something that should follow the visitor
-  // forever.
-  function captureUTMs() {
-    const params = new URLSearchParams(window.location.search);
-    const fromURL = {
-      utm_source: params.get('utm_source'),
-      utm_medium: params.get('utm_medium'),
-      utm_campaign: params.get('utm_campaign'),
-    };
-    const hasAny = fromURL.utm_source || fromURL.utm_medium || fromURL.utm_campaign;
-    if (hasAny) {
-      try { sessionStorage.setItem('cw_utm', JSON.stringify(fromURL)); } catch (e) { /* storage unavailable — fall through, just won't persist across pages */ }
-      return fromURL;
-    }
-    try {
-      const stored = sessionStorage.getItem('cw_utm');
-      if (stored) return JSON.parse(stored);
-    } catch (e) { /* storage unavailable or corrupt — proceed with no UTM data rather than break the widget */ }
-    return { utm_source: null, utm_medium: null, utm_campaign: null };
-  }
-  const utmData = captureUTMs();
-
-  function sendTranscript() {
-    // Only send if there's at least one new message since the last send,
-    // and at least one real visitor message overall.
-    if (history.length <= lastTranscriptSentLength) return;
-    if (!history.some((m) => m.role === 'user')) return;
-
-    const payload = JSON.stringify({ messages: history });
-    lastTranscriptSentLength = history.length;
-
-    // sendBeacon is used (not fetch) because it reliably completes even as
-    // the page is unloading/closing — a regular fetch can get cancelled mid-flight.
-    if (navigator.sendBeacon) {
-      const blob = new Blob([payload], { type: 'application/json' });
-      navigator.sendBeacon('/api/log-transcript', blob);
-    } else {
-      // Fallback for older browsers without sendBeacon support.
-      fetch('/api/log-transcript', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: payload,
-        keepalive: true,
-      }).catch(function (err) {
-        // Silent to the visitor (this fires in the background), but at
-        // least surfaces in the browser console for debugging — this path
-        // only runs on browsers without sendBeacon support, which is rare.
-        console.error('Transcript fallback send failed:', err);
-      });
-    }
-  }
-
-  // Ultimate fallback: fires even if the visitor never clicks the close
-  // button — just navigates away or closes the tab.
-  window.addEventListener('pagehide', sendTranscript);
-
-  const GREETING = "Hey, thanks for stopping by! How can I make your car buying easier today?";
-
-  function linkify(text) {
-    // turn URLs into clickable links (Calendly link becomes a styled button), escape HTML first —
-    // quotes MUST be escaped too, not just angle brackets, or a crafted string like
-    // http://x.com"onmouseover="alert(1) can break out of the href attribute below.
-    const escaped = text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-    return escaped.replace(/(https?:\/\/[^\s]+)/g, function (match) {
-      // strip common trailing punctuation so "...jhodaed." doesn't break the link
-      const trailing = match.match(/[.,!?)]+$/);
-      const clean = trailing ? match.slice(0, -trailing[0].length) : match;
-      const suffix = trailing ? trailing[0] : '';
-      if (clean.indexOf('calendly.com') !== -1) {
-        return '<br/><a class="cw-book-btn" href="' + clean + '" target="_blank" rel="noopener">Book Your Free Call</a>' + suffix;
-      }
-      return '<a href="' + clean + '" target="_blank" rel="noopener">' + clean + '</a>' + suffix;
+async function notifyFailure(message) {
+  if (!process.env.NTFY_TOPIC) return; // not configured — fails silently, same as before
+  try {
+    await fetch(`https://ntfy.sh/${process.env.NTFY_TOPIC}`, {
+      method: 'POST',
+      headers: {
+        Title: 'Curated Whips widget alert',
+        Priority: 'high',
+        // ntfy's own email relay — independent of Resend, so a Resend
+        // outage doesn't also silence the alert about the Resend outage.
+        Email: LEAD_EMAIL_TO,
+      },
+      body: message,
     });
+  } catch (err) {
+    // Nothing further we can do if even the alert channel fails — this is
+    // intentionally a separate, independent service from Resend/Anthropic
+    // specifically so a Resend outage doesn't also take out the alert.
+    console.error('Failed to send ntfy alert:', err);
   }
+}
 
-  function addMessage(role, content) {
-    const div = document.createElement('div');
-    div.className = 'cw-msg ' + role;
-    const bubble = document.createElement('div');
-    bubble.className = 'cw-bubble';
-    bubble.innerHTML = linkify(content);
-    div.appendChild(bubble);
-    messagesEl.appendChild(div);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+async function sendLeadEmail(lead) {
+  const displayName = lead.name && lead.name.trim() && lead.name.toLowerCase() !== 'not provided' ? lead.name : 'Anonymous visitor';
+  if (!process.env.RESEND_API_KEY) {
+    console.error('RESEND_API_KEY not set — lead was captured but email not sent:', lead);
+    await notifyFailure('RESEND_API_KEY missing — a lead was captured but no email was sent.');
+    return;
   }
-
-  // On mobile, opening the keyboard shrinks the actually-visible viewport
-  // without CSS vh units reliably reflecting that. Without this, the input
-  // and Send button can end up hidden behind the keyboard. visualViewport
-  // tracks the real visible area and lets us reposition/resize to match.
-  if (window.visualViewport) {
-    function adjustForKeyboard() {
-      const vv = window.visualViewport;
-      const keyboardOffset = window.innerHeight - vv.height - vv.offsetTop;
-      if (keyboardOffset > 10) {
-        // Keyboard is open — reposition above it. Safe-area inset is moot
-        // here since the keyboard itself occupies that space.
-        panel.style.bottom = (96 + keyboardOffset) + 'px';
-        panel.style.maxHeight = (vv.height - 40) + 'px';
-      } else {
-        // Keyboard closed — hand control back to CSS so safe-area-inset
-        // positioning applies again, instead of leaving it permanently
-        // overridden by this function's last calculation.
-        panel.style.bottom = '';
-        panel.style.maxHeight = '';
-      }
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      },
+      body: JSON.stringify({
+        from: 'Curated Whips Widget <leads@curatedwhips.com>', // must be a verified sender/domain in Resend
+        to: [LEAD_EMAIL_TO],
+        subject: `New lead: ${displayName}`,
+        text: `New lead from the site chat widget.\n\nName: ${displayName}\nContact: ${lead.contact}\nTimeline: ${lead.timeline}\nNotes: ${lead.notes || '—'}`,
+      }),
+    });
+    if (!res.ok) {
+      const errBody = await res.text();
+      console.error(`Resend rejected lead email (status ${res.status}):`, errBody, 'Lead data:', lead);
+      await notifyFailure(`Lead email failed to send (Resend status ${res.status}). A lead may have been lost — check Vercel logs.`);
     }
-    window.visualViewport.addEventListener('resize', adjustForKeyboard);
-    window.visualViewport.addEventListener('scroll', adjustForKeyboard);
+  } catch (err) {
+    console.error('Failed to send lead email (network error):', err, 'Lead data:', lead);
+    await notifyFailure('Lead email failed to send (network error). A lead may have been lost — check Vercel logs.');
   }
+}
 
-  function togglePanel() {
-    panel.classList.toggle('open');
-    if (panel.classList.contains('open')) {
-      if (!opened) {
-        opened = true;
-        addMessage('assistant', GREETING);
-        // NOTE: greeting is shown but NOT pushed to `history` — Anthropic's API
-        // requires the conversation to start with a user message, so history
-        // stays empty until the visitor actually sends something.
-      }
-    } else {
-      // Panel just closed, however it was closed — send the transcript here
-      // so both the bubble icon and the explicit close button behave the same way.
-      sendTranscript();
+async function sendReadyLeadEmail(lead) {
+  if (!process.env.RESEND_API_KEY) {
+    console.error('RESEND_API_KEY not set — ready lead was captured but email not sent:', lead);
+    await notifyFailure('RESEND_API_KEY missing — a ready lead was captured but no email was sent.');
+    return;
+  }
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      },
+      body: JSON.stringify({
+        from: 'Curated Whips Widget <leads@curatedwhips.com>',
+        to: [LEAD_EMAIL_TO],
+        subject: `Ready lead in ${lead.zip} — no contact info yet`,
+        text: `A visitor said they're ready to buy but hasn't booked (or booked without you seeing this yet) — no name/contact was collected, this is for context only.\n\nZIP: ${lead.zip}\nTimeline: ${lead.timeline || '—'}\nVehicle type: ${lead.vehicle_type || '—'}\nBudget: ${lead.budget || '—'}\nTrade-in: ${lead.trade_in || '—'}\nModel preference: ${lead.model_preference || '—'}\n\nIf a matching booking shows up on your calendar around now, this is likely them.`,
+      }),
+    });
+    if (!res.ok) {
+      const errBody = await res.text();
+      console.error(`Resend rejected ready-lead email (status ${res.status}):`, errBody, 'Lead data:', lead);
+      await notifyFailure(`Ready-lead email failed to send (Resend status ${res.status}). Context may have been lost — check Vercel logs.`);
     }
+  } catch (err) {
+    console.error('Failed to send ready lead email (network error):', err, 'Lead data:', lead);
+    await notifyFailure('Ready-lead email failed to send (network error). Context may have been lost — check Vercel logs.');
   }
+}
 
-  btn.addEventListener('click', togglePanel);
-  closeBtn.addEventListener('click', togglePanel);
+// --- Supabase lead writes (new) ---
+// Runs alongside the email notifications above, not instead of them — the
+// email is a real-time nudge, this is the permanent record the tracker and
+// dashboard are built on.
 
-  async function sendMessage() {
-    let text = input.value.trim();
-    if (!text) return;
-    if (text.length > 1000) text = text.slice(0, 1000);
-    input.value = '';
-    sendBtn.disabled = true;
+function splitContact(contact) {
+  if (!contact) return { email: null, phone: null };
+  const trimmed = String(contact).trim();
+  if (!trimmed || trimmed.toLowerCase() === 'not provided') return { email: null, phone: null };
+  if (trimmed.includes('@')) return { email: trimmed, phone: null };
+  return { email: null, phone: trimmed };
+}
 
-    addMessage('user', text);
-    history.push({ role: 'user', content: text });
+async function logLeadToSupabase(lead, utm) {
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    console.error('Supabase env vars not set — lead captured but not written to Supabase:', lead);
+    return;
+  }
+  try {
+    const { email, phone } = splitContact(lead.contact);
+    const { error } = await supabase.from('leads').insert({
+      lead_source: 'Website Widget',
+      utm_source: (utm && utm.utmSource) || null,
+      utm_medium: (utm && utm.utmMedium) || null,
+      utm_campaign: (utm && utm.utmCampaign) || null,
+      contact_name: lead.name && lead.name.trim() && lead.name.toLowerCase() !== 'not provided' ? lead.name : 'Anonymous visitor',
+      contact_email: email,
+      contact_phone: phone,
+      timeline: lead.timeline,
+      status: 'New',
+      notes: lead.notes || null,
+    });
+    if (error) console.error('Supabase insert error (log_lead):', error);
+  } catch (err) {
+    console.error('Supabase insert failed (log_lead):', err);
+  }
+}
 
-    const typingEl = document.createElement('div');
-    typingEl.className = 'cw-msg assistant';
-    typingEl.innerHTML = '<div class="cw-bubble">...</div>';
-    messagesEl.appendChild(typingEl);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+async function logReadyLeadToSupabase(lead, utm) {
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    console.error('Supabase env vars not set — ready lead captured but not written to Supabase:', lead);
+    return;
+  }
+  try {
+    const noteParts = [
+      lead.vehicle_type ? `Vehicle type: ${lead.vehicle_type}` : null,
+      lead.budget ? `Budget: ${lead.budget}` : null,
+      lead.trade_in ? `Trade-in: ${lead.trade_in}` : null,
+      lead.model_preference ? `Model preference: ${lead.model_preference}` : null,
+    ].filter(Boolean);
+    const { error } = await supabase.from('leads').insert({
+      lead_source: 'Website Widget',
+      utm_source: (utm && utm.utmSource) || null,
+      utm_medium: (utm && utm.utmMedium) || null,
+      utm_campaign: (utm && utm.utmCampaign) || null,
+      timeline: lead.timeline || null,
+      status: 'Qualified',
+      notes: `ZIP: ${lead.zip}` + (noteParts.length ? ' | ' + noteParts.join(' | ') : ''),
+    });
+    if (error) console.error('Supabase insert error (log_ready_lead):', error);
+  } catch (err) {
+    console.error('Supabase insert failed (log_ready_lead):', err);
+  }
+}
 
+// --- Deterministic lead-capture backstop ---
+// The system prompt tells Angela to always call log_lead/log_ready_lead in the
+// same turn she tells a visitor she's recording something — but that's still
+// an AI following an instruction, not a guarantee. This backstop doesn't
+// replace that instruction; it catches the case where she says the words
+// without making the call, so a lead is never silently dropped.
+
+// Broad on purpose — false positives here just mean an extra manual-review
+// row in Supabase, which costs nothing; false negatives mean a lost lead,
+// which costs a client. Biased toward over-flagging, same philosophy as the
+// ZIP-exclusion regexes below.
+function impliesLeadWasLogged(replyText) {
+  if (!replyText) return false;
+  return /\b(i'?ll|i will)\s+(jot|note|write|keep|put)\b.{0,25}\b(down|in mind|on file|noted|for (when|later|future))\b|\bnoted\b|\bi'?ve\s+(got|noted)\s+that\b|\bkeep(ing)?\s+(that|this|it)\s+in\s+mind\b/i.test(
+    replyText
+  );
+}
+
+async function logFallbackTranscript(messages, finalReply, utm) {
+  const transcript = messages
+    .filter((m) => typeof m.content === 'string')
+    .map((m) => `${m.role === 'user' ? 'Visitor' : 'Angela'}: ${m.content}`)
+    .join('\n') + `\nAngela: ${finalReply}`;
+
+  // Email alert — same channel as normal leads, so it lands in the same inbox
+  // you're already checking.
+  if (process.env.RESEND_API_KEY) {
     try {
-      const res = await fetch('/api/chat', {
+      const res = await fetch('https://api.resend.com/emails', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: history, utm: utmData }),
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+        },
+        body: JSON.stringify({
+          from: 'Curated Whips Widget <leads@curatedwhips.com>',
+          to: [LEAD_EMAIL_TO],
+          subject: 'Possible missed lead — manual review needed',
+          text: `Angela's reply implied she recorded a lead, but no lead tool call was detected this turn. Full conversation below for manual follow-up:\n\n${transcript}`,
+        }),
       });
-      const data = await res.json();
-      const reply = data.reply || "Sorry, something went wrong on our end — try again in a moment, or call us at 844-987-9447.";
-      typingEl.remove();
-      addMessage('assistant', reply);
-      history.push({ role: 'assistant', content: reply });
+      if (!res.ok) {
+        console.error('Fallback transcript email failed to send, status:', res.status);
+        await notifyFailure('Fallback lead-capture email failed to send — check Vercel logs for the transcript.');
+      }
     } catch (err) {
-      typingEl.remove();
-      addMessage('assistant', "Sorry, something went wrong on our end — try again in a moment, or call us at 844-987-9447.");
-    } finally {
-      sendBtn.disabled = false;
+      console.error('Fallback transcript email failed (network error):', err);
+      await notifyFailure('Fallback lead-capture email failed (network error) — check Vercel logs for the transcript.');
+    }
+  } else {
+    console.error('RESEND_API_KEY not set — fallback transcript not emailed. Transcript:', transcript);
+  }
+
+  // Supabase row — flagged distinctly from normal leads so it's easy to find
+  // and triage separately in the dashboard.
+  if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const { error } = await supabase.from('leads').insert({
+        lead_source: 'Website Widget',
+        utm_source: (utm && utm.utmSource) || null,
+        utm_medium: (utm && utm.utmMedium) || null,
+        utm_campaign: (utm && utm.utmCampaign) || null,
+        status: 'Needs Review — Fallback Capture',
+        notes: transcript.slice(0, 4000), // Supabase text field safety cap
+      });
+      if (error) console.error('Supabase insert error (fallback transcript):', error);
+    } catch (err) {
+      console.error('Supabase insert failed (fallback transcript):', err);
+    }
+  } else {
+    console.error('Supabase env vars not set — fallback transcript not written to Supabase.');
+  }
+}
+
+module.exports = async function handler(req, res) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  // Basic origin check — NOT a real security boundary (Origin/Referer headers
+  // are trivially forgeable with curl or any scripting tool), but it stops
+  // casual scripted abuse and accidental cross-site calls. Real protection
+  // requires proper rate limiting (e.g. Upstash) or Vercel's firewall features,
+  // which is not yet implemented — this is a stopgap, not a fix.
+  // Matches the production domain OR any Vercel deployment URL containing
+  // "curatedwhips" — Vercel preview deployments (created automatically on
+  // branch pushes) use URLs like curatedwhips-site-git-branch-name.vercel.app,
+  // which won't match an exact hostname check, so this needs to be a bit loose.
+  const origin = req.headers.origin || req.headers.referer || '';
+  const originAllowed =
+    origin.includes('curatedwhips.com') || (origin.includes('curatedwhips') && origin.includes('.vercel.app'));
+  if (origin && !originAllowed) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  // Defensive access, not destructuring — req.body can be undefined if a
+  // request arrives with no body or an unrecognized Content-Type, and
+  // destructuring undefined throws outside this function's try/catch below.
+  let messages = req.body && req.body.messages;
+  // UTM data the widget captured from the page URL (or sessionStorage, if the
+  // visitor navigated to a different page since landing). Entirely optional —
+  // a visitor who arrived with no tags at all just gets null values here,
+  // same as before this was added.
+  const utm = (req.body && req.body.utm) || {};
+  const utmSource = typeof utm.utm_source === 'string' ? utm.utm_source.slice(0, 100) : null;
+  const utmMedium = typeof utm.utm_medium === 'string' ? utm.utm_medium.slice(0, 100) : null;
+  const utmCampaign = typeof utm.utm_campaign === 'string' ? utm.utm_campaign.slice(0, 100) : null;
+
+  if (!messages || !Array.isArray(messages) || messages.length === 0) {
+    return res.status(400).json({ error: 'messages array required' });
+  }
+
+  // Cap history so long conversations don't blow up token usage/cost.
+  // Must preserve strict user/assistant alternation starting with "user" —
+  // Anthropic's API rejects a messages array that doesn't start that way.
+  if (messages.length > MAX_HISTORY_MESSAGES) {
+    let excess = messages.length - MAX_HISTORY_MESSAGES;
+    if (excess % 2 !== 0) excess += 1;
+    messages = messages.slice(excess);
+  }
+
+  if (messages[0]?.role !== 'user') {
+    return res.status(400).json({ error: 'messages must start with a user message' });
+  }
+
+  // Server-side validation — the widget's client-side checks (length cap,
+  // role structure) are UX conveniences only and can be bypassed by anyone
+  // calling this endpoint directly, so enforce the real limits here too.
+  const MAX_MESSAGE_LENGTH = 2000;
+  for (const m of messages) {
+    if (m.role !== 'user' && m.role !== 'assistant') {
+      return res.status(400).json({ error: 'invalid message role' });
+    }
+    if (typeof m.content !== 'string') {
+      return res.status(400).json({ error: 'message content must be a string' });
+    }
+    if (m.content.length > MAX_MESSAGE_LENGTH) {
+      return res.status(400).json({ error: 'message too long' });
     }
   }
 
-  sendBtn.addEventListener('click', sendMessage);
-  input.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') sendMessage();
-  });
-})();
-</script>
+  try {
+    let response = await callClaude(messages);
+    let data = await response.json();
 
-</body>
-</html>
+    if (data.error) {
+      console.error('Anthropic API error:', data.error);
+      return res.status(500).json({ error: `Something went wrong. Please try again or call us at ${BUSINESS_PHONE}.` });
+    }
+
+    // Handle tool use (lead capture) — loop to support multiple tool calls
+    // in one turn, and chained calls across rounds, with a safety cap.
+    let rounds = 0;
+    let leadToolFired = false; // tracks whether log_lead/log_ready_lead actually ran this turn —
+    // used below by the fallback-capture backstop, independent of anything the AI said.
+    while (data.stop_reason === 'tool_use' && rounds < 3) {
+      rounds++;
+      const toolUseBlocks = (data.content || []).filter((b) => b.type === 'tool_use');
+      if (toolUseBlocks.length === 0) break;
+
+      const toolResults = [];
+      for (const block of toolUseBlocks) {
+        if (block.name === 'log_lead') {
+          leadToolFired = true;
+          await sendLeadEmail(block.input);
+          await logLeadToSupabase(block.input, { utmSource, utmMedium, utmCampaign });
+        } else if (block.name === 'log_ready_lead') {
+          leadToolFired = true;
+          await sendReadyLeadEmail(block.input);
+          await logReadyLeadToSupabase(block.input, { utmSource, utmMedium, utmCampaign });
+        }
+        toolResults.push({
+          type: 'tool_result',
+          tool_use_id: block.id,
+          content: 'Recorded successfully.',
+        });
+      }
+
+      const followUpMessages = [
+        ...messages,
+        { role: 'assistant', content: data.content },
+        { role: 'user', content: toolResults },
+      ];
+
+      response = await callClaude(followUpMessages);
+      data = await response.json();
+
+      if (data.error) {
+        console.error('Anthropic API error (follow-up):', data.error);
+        return res.status(500).json({ error: `Something went wrong. Please try again or call us at ${BUSINESS_PHONE}.` });
+      }
+
+      messages = followUpMessages; // keep growing the base in case of another round
+    }
+
+    let reply = data.content?.find((block) => block.type === 'text')?.text
+      || `Thanks — I've got that noted. Feel free to ask anything else, or reach us directly at ${BUSINESS_PHONE}.`;
+
+    // Deterministic lead-capture backstop — runs regardless of what the AI decided.
+    // If Angela's reply implies she recorded something (e.g. "I'll jot that down")
+    // but log_lead/log_ready_lead never actually fired this turn, don't rely on her
+    // getting it right next time — capture the raw transcript now so nothing is lost,
+    // flagged for manual review since we can't guarantee structured fields here.
+    if (!leadToolFired && impliesLeadWasLogged(reply)) {
+      console.error('FALLBACK CAPTURE FIRED: reply implied a lead was logged but no log_lead/log_ready_lead tool call occurred this turn. Saving raw transcript for manual review.');
+      await logFallbackTranscript(messages, reply, { utmSource, utmMedium, utmCampaign });
+    }
+
+    // Deterministic compliance check — runs regardless of what the AI decided.
+    if (conversationMentionsExcludedZip(messages) && /calendly\.com/i.test(reply)) {
+      console.error(
+        'COMPLIANCE OVERRIDE FIRED: AI offered the booking link despite an excluded-area ZIP (MO/KS or outside continental US) appearing in this conversation. ' +
+          'This should not happen if the prompt is being followed correctly — review this conversation for a possible prompt-following failure. ' +
+          'Full conversation: ' + JSON.stringify(messages)
+      );
+      reply =
+        "Actually, let me double check something on my end before we book — we're expanding market by market and I want to confirm we're set up in your area first. I'll make sure someone follows up with you directly, or feel free to call us at " +
+        BUSINESS_PHONE +
+        '.';
+    }
+
+    return res.status(200).json({ reply });
+  } catch (err) {
+    console.error('Chat handler error:', err);
+    return res.status(500).json({ error: `Something went wrong. Please try again or call us at ${BUSINESS_PHONE}.` });
+  }
+}
+
+// Set after module.exports is assigned the handler function above, not before —
+// assigning module.exports.config earlier would get silently discarded the
+// moment module.exports itself gets reassigned to the function.
+module.exports.config = {
+  maxDuration: 30,
+};
+
+function callClaude(messages) {
+  return fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': process.env.ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-5',
+      max_tokens: 700,
+      system: SYSTEM_PROMPT,
+      tools: TOOLS,
+      messages: messages,
+    }),
+  });
+}
+
+// --- Deterministic compliance backstop for service-area exclusions ---
+// The system prompt instructs Angela never to offer the booking link outside
+// the actual service area, but that's an AI following instructions, not a
+// guarantee. This backstop doesn't replace the prompt instruction; it catches
+// the case where the AI gets it wrong. Two separate checks because MO/KS and
+// AK/HI/territories are handled differently in conversation (one discreet,
+// one plainly statable) even though both block the booking link the same way.
+//
+// APPROXIMATE ZIP RANGES — standard 3-digit ZIP prefix ranges, not a
+// postal-accurate lookup — a handful of edge ZIPs near state borders may be
+// misclassified. Intentionally biased toward over-flagging rather than
+// under-flagging: a false positive costs a booking link, a false negative
+// is an actual service-area promise that shouldn't have been made.
+function isLikelyMoKsZipPrefix(fiveDigitString) {
+  const prefix = parseInt(fiveDigitString.slice(0, 3), 10);
+  if (isNaN(prefix)) return false;
+  return (prefix >= 630 && prefix <= 658) || (prefix >= 660 && prefix <= 679);
+}
+
+// Alaska: 995-999. Hawaii: 967-968. Puerto Rico/USVI: 006-009. Guam/other
+// Pacific territories: 969. Not postal-perfect, same over-flagging bias as above.
+function isLikelyOutsideContinentalZipPrefix(fiveDigitString) {
+  const prefix = parseInt(fiveDigitString.slice(0, 3), 10);
+  if (isNaN(prefix)) return false;
+  return (
+    (prefix >= 995 && prefix <= 999) ||
+    (prefix >= 967 && prefix <= 968) ||
+    (prefix >= 6 && prefix <= 9) ||
+    prefix === 969
+  );
+}
+
+function conversationMentionsExcludedZip(messages) {
+  for (const m of messages) {
+    if (m.role !== 'user' || typeof m.content !== 'string') continue;
+    const candidates = m.content.match(/\b\d{5}\b/g) || [];
+    if (candidates.some((z) => isLikelyMoKsZipPrefix(z) || isLikelyOutsideContinentalZipPrefix(z))) return true;
+  }
+  return false;
+}
