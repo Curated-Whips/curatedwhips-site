@@ -370,13 +370,16 @@
   .cw-msg.user .cw-bubble { background: var(--cw-header-bg); color: var(--white, #FEFDFB); }
   .cw-msg.assistant .cw-bubble { background: var(--cw-assistant-bubble); color: var(--cw-body-text); }
   .cw-msg.assistant .cw-bubble a { color: var(--forest, #2E4638); }
+  .cw-book-wrap { margin: 10px 0 2px; }
   .cw-book-btn {
-    display: inline-block;
-    margin-top: 6px;
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    text-align: center;
     background: var(--cw-accent);
     color: var(--cw-accent-text) !important;
     text-decoration: none !important;
-    padding: 9px 14px;
+    padding: 10px 14px;
     border-radius: var(--cw-radius);
     font-size: 13px;
     font-weight: 600;
@@ -514,7 +517,7 @@
   // button — just navigates away or closes the tab.
   window.addEventListener('pagehide', sendTranscript);
 
-  const GREETING = "Hey, thanks for stopping by! How can I make your car buying easier today?";
+  const GREETING = "Hello, I'm Angela with Curated Whips. Are you looking to buy soon, or just exploring your options for now? Either way, I'm happy to help.";
 
   function linkify(text) {
     // turn URLs into clickable links (Calendly link becomes a styled button), escape HTML first —
@@ -526,15 +529,22 @@
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
-    return escaped.replace(/(https?:\/\/[^\s]+)/g, function (match) {
-      // strip common trailing punctuation so "...jhodaed." doesn't break the link
-      const trailing = match.match(/[.,!?)]+$/);
-      const clean = trailing ? match.slice(0, -trailing[0].length) : match;
+    return escaped.replace(/\(?(https?:\/\/[^\s]+)/g, function (match) {
+      // Angela sometimes writes the raw URL wrapped in parentheses mid-sentence
+      // (e.g. "...that call (https://...), and you can..."). A parenthesis or
+      // trailing punctuation sitting right next to a big block-level button
+      // looks broken, so for the booking button specifically we strip both
+      // ends entirely rather than trying to preserve them.
+      const hadLeadingParen = match.charAt(0) === '(';
+      const body = hadLeadingParen ? match.slice(1) : match;
+      const trailing = body.match(/[.,!?)]+$/);
+      const clean = trailing ? body.slice(0, -trailing[0].length) : body;
       const suffix = trailing ? trailing[0] : '';
       if (clean.indexOf('calendly.com') !== -1) {
-        return '<br/><a class="cw-book-btn" href="' + clean + '" target="_blank" rel="noopener">Book Your Free Call</a>' + suffix;
+        return '<div class="cw-book-wrap"><a class="cw-book-btn" href="' + clean + '" target="_blank" rel="noopener">Book Your Free Call</a></div>';
       }
-      return '<a href="' + clean + '" target="_blank" rel="noopener">' + clean + '</a>' + suffix;
+      const prefix = hadLeadingParen ? '(' : '';
+      return prefix + '<a href="' + clean + '" target="_blank" rel="noopener">' + clean + '</a>' + suffix;
     });
   }
 
@@ -623,7 +633,19 @@
       history.push({ role: 'assistant', content: reply });
     } catch (err) {
       typingEl.remove();
-      addMessage('assistant', "Sorry, something went wrong on our end — try again in a moment, or call us at 844-987-9447.");
+      // A thrown fetch (as opposed to a normal error response from the server)
+      // almost always means the request never made it out — a dropped signal,
+      // airplane mode, a dead spot — not a problem on our end. Distinguishing
+      // this from a real server error avoids telling someone to call the
+      // business over what was actually just their own connection blinking.
+      if (!navigator.onLine) {
+        addMessage('assistant', "Looks like you lost signal there for a second — mind sending that again once you're back online? We can't wait to help!");
+      } else {
+        addMessage('assistant', "That message didn't seem to go through — could be a weak connection. Try sending it again in a moment. We can't wait to help!");
+      }
+      // Message stays in the input-less state (already cleared) rather than
+      // being re-queued automatically — the visitor retyping/resending is
+      // simpler and more reliable than silent auto-retry logic here.
     } finally {
       sendBtn.disabled = false;
     }
